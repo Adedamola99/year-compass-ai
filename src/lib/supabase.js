@@ -17,31 +17,44 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 // AUTH HELPERS
 // ============================================================================
 
+// export async function signUp(email, password, name) {
+//   const { data, error } = await supabase.auth.signUp({
+//     email,
+//     password,
+//     options: {
+//       data: { name }, // Store name in user metadata
+//     },
+//   });
+
+//   if (error) throw error;
+
+//   // Create user profile
+//   if (data.user) {
+//     const { error: profileError } = await supabase
+//       .from("user_profiles")
+//       .insert({
+//         id: data.user.id,
+//         name,
+//         email,
+//         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+//       });
+
+//     if (profileError) throw profileError;
+//   }
+
+//   return data;
+// }
+
 export async function signUp(email, password, name) {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
-      data: { name }, // Store name in user metadata
+      data: { name }, // Store name in metadata for the trigger
     },
   });
 
   if (error) throw error;
-
-  // Create user profile
-  if (data.user) {
-    const { error: profileError } = await supabase
-      .from("user_profiles")
-      .insert({
-        id: data.user.id,
-        name,
-        email,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      });
-
-    if (profileError) throw profileError;
-  }
-
   return data;
 }
 
