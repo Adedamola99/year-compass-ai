@@ -11,50 +11,33 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 // Create a single supabase client for interacting with your database
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// This client will work both client-side and server-side
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+});
 
 // ============================================================================
 // AUTH HELPERS
 // ============================================================================
-
-// export async function signUp(email, password, name) {
-//   const { data, error } = await supabase.auth.signUp({
-//     email,
-//     password,
-//     options: {
-//       data: { name }, // Store name in user metadata
-//     },
-//   });
-
-//   if (error) throw error;
-
-//   // Create user profile
-//   if (data.user) {
-//     const { error: profileError } = await supabase
-//       .from("user_profiles")
-//       .insert({
-//         id: data.user.id,
-//         name,
-//         email,
-//         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-//       });
-
-//     if (profileError) throw profileError;
-//   }
-
-//   return data;
-// }
 
 export async function signUp(email, password, name) {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
-      data: { name }, // Store name in metadata for the trigger
+      data: {
+        name,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
     },
   });
 
   if (error) throw error;
+
+  // Profile is now auto-created by database trigger!
   return data;
 }
 
