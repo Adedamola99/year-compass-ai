@@ -4,8 +4,8 @@
 import { callIntakeInterview, extractJSON } from "@/lib/gemini";
 import { mockIntakeInterview } from "@/lib/mockAI"; // MOCK MODE
 import { getSystemPrompt } from "@/lib/prompts";
+import { saveIntakeResponseAdmin } from "@/lib/supabase-admin"; // Use admin client
 import {
-  saveIntakeResponse,
   saveConversation,
   updateConversation,
   getActiveConversation,
@@ -45,7 +45,7 @@ export async function POST(request) {
           top_3_priorities: result.intakeData.top_3_priorities,
           coaching_style: result.intakeData.coaching_style,
         };
-        await saveIntakeResponse(userId, dbIntakeData);
+        await saveIntakeResponseAdmin(userId, dbIntakeData); // Use admin function
       }
 
       return NextResponse.json({

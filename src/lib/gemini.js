@@ -49,7 +49,7 @@ export async function callGemini(messages, systemPrompt = "", options = {}) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(requestBody),
-      }
+      },
     );
 
     const data = await response.json();
@@ -93,7 +93,7 @@ export async function callPlanGeneration(intakeData, systemPrompt) {
       content: `Here is the intake data:\n\n${JSON.stringify(
         intakeData,
         null,
-        2
+        2,
       )}\n\nPlease create a comprehensive year plan.`,
     },
   ];
@@ -114,7 +114,7 @@ export async function callDailyCoach(context, userMessage, systemPrompt) {
       content: `Context:\n${JSON.stringify(
         context,
         null,
-        2
+        2,
       )}\n\nUser message: ${userMessage}`,
     },
   ];
@@ -132,7 +132,7 @@ export async function callAdaptation(
   currentPlan,
   completionHistory,
   reason,
-  systemPrompt
+  systemPrompt,
 ) {
   const messages = [
     {
@@ -140,11 +140,11 @@ export async function callAdaptation(
       content: `Current plan:\n${JSON.stringify(
         currentPlan,
         null,
-        2
+        2,
       )}\n\nCompletion history:\n${JSON.stringify(
         completionHistory,
         null,
-        2
+        2,
       )}\n\nReason for adaptation: ${reason}\n\nPlease suggest adaptations.`,
     },
   ];
@@ -187,7 +187,7 @@ export async function validateApiKey(apiKey) {
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: "Test" }] }],
         }),
-      }
+      },
     );
 
     const data = await response.json();
@@ -197,7 +197,7 @@ export async function validateApiKey(apiKey) {
   }
 }
 
-export default {
+const geminiModule = {
   callGemini,
   callIntakeInterview,
   callPlanGeneration,
@@ -206,3 +206,5 @@ export default {
   extractJSON,
   validateApiKey,
 };
+
+export default geminiModule;

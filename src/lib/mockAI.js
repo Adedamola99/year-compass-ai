@@ -184,7 +184,9 @@ function generateMockIntakeData(messages) {
   };
 }
 
-export default {
+const mockAIModule = {
   mockIntakeInterview,
   mockPlanGeneration,
 };
+
+export default mockAIModule;
