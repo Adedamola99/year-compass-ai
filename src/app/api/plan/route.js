@@ -1,15 +1,11 @@
 // app/api/plan/route.js
 // Generate yearly plan from intake data
 
-import { callPlanGeneration, extractJSON } from "@/lib/gemini";
-import { mockPlanGeneration } from "@/lib/mockAI"; // MOCK MODE
+import { callPlanGeneration, extractJSON } from "@/lib/ai-client";
 import { getSystemPrompt } from "@/lib/prompts";
-import { getIntakeResponse } from "@/lib/supabase";
-import { saveYearPlanAdmin, createDailyTasksAdmin } from "@/lib/supabase-admin"; // Use admin client
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import { saveYearPlanAdmin, createDailyTasksAdmin } from "@/lib/supabase-admin";
 import { NextResponse } from "next/server";
-
-// Toggle this to switch between mock and real AI
-const USE_MOCK = true; // Set to false when you have a working API
 
 export async function POST(request) {
   try {
@@ -20,98 +16,116 @@ export async function POST(request) {
       return NextResponse.json({ error: "Missing userId" }, { status: 400 });
     }
 
-    // Get intake response
-    const intake = await getIntakeResponse(userId);
+    console.log("🔍 Looking for intake for user:", userId);
 
-    let planData;
+    // Get intake response using ADMIN client
+    const { data: intake, error: intakeError } = await supabaseAdmin
+      .from("intake_responses")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
 
-    // USE MOCK MODE (instant, no API)
-    if (USE_MOCK) {
-      if (!intake) {
-        // If no intake in DB but using mock mode, create a mock intake
-        const mockIntake = {
-          id: "mock-intake-id",
-          user_id: userId,
-          career_goals: "Career growth and skill development",
-          health_goals: "Build consistent exercise habits",
-          finance_goals: "Save money and invest",
-          learning_goals: "Learn new skills",
-          spirituality_goals: "Daily spiritual practice",
-          lifestyle_goals: "Better work-life balance",
-          work_schedule: "9-5 weekdays with commute",
-          energy_patterns: "Morning person, crashes afternoon",
-          existing_commitments: "Family time on weekends",
-          available_daily_time: "2-3 hours on weekdays, 6-8 hours weekends",
-          derailment_factors: ["work stress", "lack of energy"],
-          top_priorities: [
-            "Career growth",
-            "Health habits",
-            "Financial stability",
-          ],
-          coaching_style: "Firm but compassionate",
-        };
-
-        planData = await mockPlanGeneration(mockIntake);
-      } else {
-        planData = await mockPlanGeneration(intake);
-      }
-    } else {
-      // REAL AI MODE
-      if (!intake) {
-        return NextResponse.json(
-          {
-            error:
-              "No intake response found. Please complete onboarding first.",
-          },
-          { status: 404 }
-        );
-      }
-
-      // Build intake data object for AI
-      const intakeData = {
-        aspirations: {
-          career: intake.career_goals,
-          health: intake.health_goals,
-          finance: intake.finance_goals,
-          learning: intake.learning_goals,
-          spirituality: intake.spirituality_goals,
-          lifestyle: intake.lifestyle_goals,
+    if (intakeError || !intake) {
+      console.error("❌ No intake found:", intakeError);
+      return NextResponse.json(
+        {
+          error: "No intake response found. Please complete onboarding first.",
         },
-        constraints: {
-          work_schedule: intake.work_schedule,
-          energy_patterns: intake.energy_patterns,
-          commitments: intake.existing_commitments,
-          available_daily_time: intake.available_daily_time,
-        },
-        derailment_factors: intake.derailment_factors,
-        top_3_priorities: intake.top_priorities,
-        coaching_style: intake.coaching_style,
-      };
-
-      // Call AI to generate plan
-      const systemPrompt = getSystemPrompt("planGeneration");
-      const aiResponse = await callPlanGeneration(intakeData, systemPrompt);
-
-      // Extract JSON plan
-      planData = extractJSON(aiResponse);
+        { status: 404 },
+      );
     }
+
+    console.log("✅ Intake found:", intake.id);
+
+    // Build intake data object for AI
+    const intakeData = {
+      aspirations: {
+        career: intake.career_goals || null,
+        health: intake.health_goals || null,
+        finance: intake.finance_goals || null,
+        learning: intake.learning_goals || null,
+        spirituality: intake.spirituality_goals || null,
+        lifestyle: intake.lifestyle_goals || null,
+      },
+      constraints: {
+        work_schedule: intake.work_schedule || null,
+        energy_patterns: intake.energy_patterns || null,
+        commitments: intake.existing_commitments || null,
+        available_daily_time: intake.available_daily_time || null,
+      },
+      derailment_factors: intake.derailment_factors || [],
+      top_3_priorities: intake.top_priorities || [],
+      coaching_style: intake.coaching_style || null,
+    };
+
+    console.log("🤖 Calling AI to generate plan...");
+
+    // Call AI to generate plan
+    const systemPrompt = getSystemPrompt("planGeneration");
+    const aiResponse = await callPlanGeneration(intakeData, systemPrompt);
+
+    console.log(
+      "✅ AI response received (length:",
+      aiResponse.length,
+      "chars)",
+    );
+
+    // Extract JSON plan
+    let planData;
+    try {
+      planData = extractJSON(aiResponse);
+
+      // Validate plan structure
+      if (
+        !planData.quarters ||
+        !Array.isArray(planData.quarters) ||
+        planData.quarters.length === 0
+      ) {
+        throw new Error("Invalid plan structure: missing or empty quarters");
+      }
+
+      console.log("✅ Plan validated:", {
+        quarters: planData.quarters.length,
+        vision: planData.vision ? "✓" : "✗",
+        firstMonth: planData.quarters[0]?.months?.[0]?.name || "missing",
+      });
+    } catch (error) {
+      console.error("❌ Failed to parse plan JSON:", error);
+      console.error(
+        "AI Response (first 1000 chars):",
+        aiResponse.substring(0, 1000),
+      );
+
+      return NextResponse.json(
+        {
+          error:
+            "Failed to generate valid plan. The AI response wasn't formatted correctly.",
+          details: error.message,
+        },
+        { status: 500 },
+      );
+    }
+
+    console.log("📋 Plan data extracted, saving to database...");
 
     // Save plan to database using admin client
     const year = planData.year || new Date().getFullYear();
     const savedPlan = await saveYearPlanAdmin(
       userId,
-      intake?.id || "mock-intake",
+      intake.id,
       year,
       planData,
-      planData.vision
+      planData.vision,
     );
 
+    console.log("✅ Plan saved:", savedPlan.id);
+
     // Generate first week's tasks
-    const firstWeek = planData.quarters[0]?.months[0]?.weeks[0];
+    const firstWeek = planData.quarters?.[0]?.months?.[0]?.weeks?.[0];
     if (firstWeek && firstWeek.sample_tasks) {
       const today = new Date().toISOString().split("T")[0];
 
-      // Get day of week correctly
+      // Get day of week
       const daysOfWeek = [
         "sunday",
         "monday",
@@ -126,7 +140,9 @@ export async function POST(request) {
       const todaysTasks = firstWeek.sample_tasks[dayOfWeek] || [];
 
       if (todaysTasks.length > 0) {
+        console.log(`📝 Creating ${todaysTasks.length} tasks for today...`);
         await createDailyTasksAdmin(userId, savedPlan.id, today, todaysTasks);
+        console.log("✅ Tasks created");
       }
     }
 
@@ -136,10 +152,10 @@ export async function POST(request) {
       vision: planData.vision,
     });
   } catch (error) {
-    console.error("Plan generation error:", error);
+    console.error("❌ Plan generation error:", error);
     return NextResponse.json(
       { error: error.message || "Failed to generate plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -155,10 +171,17 @@ export async function GET(request) {
       return NextResponse.json({ error: "Missing userId" }, { status: 400 });
     }
 
-    const { getActiveYearPlan } = await import("@/lib/supabase");
-    const plan = await getActiveYearPlan(userId, parseInt(year));
+    const { data: plan, error } = await supabaseAdmin
+      .from("year_plans")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("year", parseInt(year))
+      .eq("is_active", true)
+      .order("version", { ascending: false })
+      .limit(1)
+      .single();
 
-    if (!plan) {
+    if (error || !plan) {
       return NextResponse.json({ error: "No plan found" }, { status: 404 });
     }
 

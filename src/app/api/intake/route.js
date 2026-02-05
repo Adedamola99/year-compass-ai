@@ -1,19 +1,13 @@
 // app/api/intake/route.js
-// API endpoint for intake interview
+// AI-powered intake interview - No mock code
 
-import { callIntakeInterview, extractJSON } from "@/lib/gemini";
-import { mockIntakeInterview } from "@/lib/mockAI"; // MOCK MODE
+import { callIntakeInterview, extractJSON } from "@/lib/ai-client";
 import { getSystemPrompt } from "@/lib/prompts";
-import { saveIntakeResponseAdmin } from "@/lib/supabase-admin"; // Use admin client
-import {
-  saveConversation,
-  updateConversation,
-  getActiveConversation,
-} from "@/lib/supabase";
+import { saveIntakeResponseAdmin } from "@/lib/supabase-admin";
 import { NextResponse } from "next/server";
 
-// Toggle this to switch between mock and real AI
-const USE_MOCK = true; // Set to false when you have a working API
+// In-memory conversation storage (resets on server restart)
+const conversations = new Map();
 
 export async function POST(request) {
   try {
@@ -23,110 +17,115 @@ export async function POST(request) {
     if (!userId || !userMessage) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // USE MOCK MODE (no API key needed!)
-    if (USE_MOCK) {
-      const result = await mockIntakeInterview(
-        userId,
-        userMessage,
-        conversationId
-      );
+    console.log("💬 User message:", userMessage);
 
-      // Save intake data when complete
-      if (result.intakeComplete && result.intakeData) {
-        // Transform mock data to match database schema
-        const dbIntakeData = {
-          aspirations: result.intakeData.aspirations,
-          constraints: result.intakeData.constraints,
-          derailment_factors: result.intakeData.derailment_factors,
-          top_3_priorities: result.intakeData.top_3_priorities,
-          coaching_style: result.intakeData.coaching_style,
-        };
-        await saveIntakeResponseAdmin(userId, dbIntakeData); // Use admin function
-      }
+    // Get or create conversation ID
+    const convId = conversationId || `intake_${userId}_${Date.now()}`;
 
-      return NextResponse.json({
-        success: true,
-        conversationId: result.conversationId,
-        aiResponse: result.aiResponse,
-        intakeComplete: result.intakeComplete,
-        intakeData: result.intakeData,
-        questionCount: result.questionCount,
-      });
-    }
-
-    // REAL AI MODE (requires API key)
-
-    // Get or create conversation
-    let conversation;
-    if (conversationId) {
-      conversation = await getActiveConversation(userId, "intake");
-      if (!conversation || conversation.id !== conversationId) {
-        return NextResponse.json(
-          { error: "Invalid conversation" },
-          { status: 404 }
-        );
-      }
-    } else {
-      // Create new conversation
-      conversation = await saveConversation(userId, "intake", []);
-    }
+    // Get existing messages or create new
+    const existingMessages = conversations.get(convId) || [];
 
     // Build conversation history
     const messages = [
-      ...conversation.messages,
+      ...existingMessages,
       { role: "user", content: userMessage },
     ];
 
-    // Call Gemini
+    console.log(
+      "🤖 Calling AI... (conversation has",
+      messages.length,
+      "messages)",
+    );
+
+    // Call AI
     const systemPrompt = getSystemPrompt("intake");
     const aiResponse = await callIntakeInterview(messages, systemPrompt);
 
-    // Add AI response to messages
+    console.log("✅ AI responded");
+
+    // Add AI response
     messages.push({ role: "assistant", content: aiResponse });
 
-    // Update conversation
-    await updateConversation(conversation.id, messages);
+    // Store in memory
+    conversations.set(convId, messages);
 
-    // Check if intake is complete (AI returned JSON)
+    // Check if intake is complete
     let intakeComplete = false;
     let intakeData = null;
 
     if (aiResponse.includes('"intake_complete": true')) {
       try {
+        console.log("🎯 Intake completion detected! Extracting JSON...");
+
         intakeData = extractJSON(aiResponse);
+
+        // Validate required fields
+        if (!intakeData.aspirations || !intakeData.constraints) {
+          throw new Error("Missing required fields in intake data");
+        }
+
         intakeComplete = true;
 
-        // Save intake response to database
-        await saveIntakeResponse(userId, intakeData);
+        console.log("✅ Intake data extracted:", {
+          career: intakeData.aspirations.career ? "✓" : "✗",
+          health: intakeData.aspirations.health ? "✓" : "✗",
+          finance: intakeData.aspirations.finance ? "✓" : "✗",
+          constraints: intakeData.constraints.work_schedule ? "✓" : "✗",
+          priorities: intakeData.top_3_priorities?.length || 0,
+        });
+
+        // Save to database
+        console.log("💾 Saving intake to database...");
+        await saveIntakeResponseAdmin(userId, intakeData);
+
+        console.log("✅ Intake saved successfully!");
+
+        // Clear conversation from memory
+        conversations.delete(convId);
       } catch (error) {
-        console.error("Failed to parse intake data:", error);
+        console.error("❌ Failed to parse or save intake data:", error);
+        console.error(
+          "AI Response (first 500 chars):",
+          aiResponse.substring(0, 500),
+        );
+
+        // Return error to frontend
+        return NextResponse.json(
+          {
+            error:
+              "The AI didn't format the response correctly. Let me try asking again.",
+            details: error.message,
+            suggestion:
+              "Please say 'yes' or 'ready' to confirm your information.",
+          },
+          { status: 500 },
+        );
       }
     }
 
     return NextResponse.json({
       success: true,
-      conversationId: conversation.id,
+      conversationId: convId,
       aiResponse,
       intakeComplete,
       intakeData,
       questionCount: Math.floor(
-        messages.filter((m) => m.role === "user").length
+        messages.filter((m) => m.role === "user").length,
       ),
     });
   } catch (error) {
-    console.error("Intake API error:", error);
+    console.error("❌ Intake API error:", error);
     return NextResponse.json(
       { error: error.message || "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
-// Get conversation history
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -136,11 +135,9 @@ export async function GET(request) {
       return NextResponse.json({ error: "Missing userId" }, { status: 400 });
     }
 
-    const conversation = await getActiveConversation(userId, "intake");
-
     return NextResponse.json({
       success: true,
-      conversation,
+      conversation: null,
     });
   } catch (error) {
     console.error("Get intake error:", error);
